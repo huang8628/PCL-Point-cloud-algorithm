@@ -1,0 +1,57 @@
+//#include <ros/ros.h>
+#include <iostream>
+#include <pcl/point_types.h>
+#include <pcl/io/pcd_io.h>
+#include <pcl/kdtree/kdtree_flann.h>
+#include <pcl/surface/mls.h>
+#include <pcl/io/io.h>
+#include <pcl/visualization/cloud_viewer.h>
+#include <pcl/visualization/pcl_visualizer.h>
+using namespace std;
+int main(int argc, char** argv) {
+    //MLS:MoveingLeastSquares(动态最小二乘法，后续查看API得知底层算法)
+    //Step1:首先创建点云对象，并将PCD文件加载到点云文件中
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+
+    pcl::io::loadPCDFile("class_sub.pcd", *cloud); //注意，cloud是指针类型变量，要向指针内地址存数据，需要用*
+    cout << "cloud->size:" << cloud->size() << endl;
+    //Step2：由于MLS算法是基于KDTree实现的，所以需要创建KDTree对象
+    pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>);
+
+    //Step3: 由于MLS功能包会同时计算点云的法向，因此创建一个用来存储包含法向信息的点云对象
+    pcl::PointCloud<pcl::PointNormal> mls_points;
+
+    //Step4：创建MLS对象
+    /*
+      注意！ MovingLeastSquares模板类的第一个参数：将要被处理的点云类型，在输出这个模板类的时候，点云XYZ内容将被平滑；
+                                     第二个参数：输出只包含法线的点云。
+    */
+    pcl::MovingLeastSquares<pcl::PointXYZ, pcl::PointNormal> mls;
+
+    //Step5：设置是否使用多项式拟合提高精度
+    //mls.setPolynomialFit(true);//pcl高版本中取消了setPolynomialFit接口，只能使用setPolynomialOrder来设置了
+
+    //Step6: 使用MLS进行平顺
+    mls.setInputCloud(cloud);
+    mls.setPolynomialOrder(2);  //设置多项式的最高阶数为2阶？
+    mls.setSearchMethod(tree);
+    mls.setSearchRadius(0.3);  //设置在进行Kdtree中K邻域，的查找半径
+    //setPolynomialOrder
+    mls.process(mls_points);
+
+    //Step7:存储点云到PCD文件
+    pcl::io::savePCDFile("bun0_mls.pcd", mls_points);
+
+    std::cerr << " MLS completed, please check the viewer and PCD file for detail." << std::endl;
+
+    //Step:Extra 显示点云
+    pcl::visualization::CloudViewer viewer("Cloud Viewer");
+    //这里会一直阻塞直到点云被渲染
+    viewer.showCloud(cloud);
+
+    // 循环判断是否退出
+    while (!viewer.wasStopped()) {
+        // 你可以在这里对点云做很多处理
+    }
+    return 0;
+}
