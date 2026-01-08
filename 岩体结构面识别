@@ -1,0 +1,114 @@
+#include <iostream>
+#include <vector>
+#include <pcl/point_types.h>
+#include <pcl/io/pcd_io.h>
+#include <pcl/search/search.h>
+#include <pcl/search/kdtree.h>
+#include <pcl/features/normal_3d.h>
+#include <pcl/visualization/cloud_viewer.h>
+#include <pcl/filters/passthrough.h>
+#include <pcl/segmentation/region_growing.h>
+#include <windows.h>
+#include <pcl/filters/extract_indices.h>
+
+int main(int argc, char** argv)
+{
+	int KN_normal = 30; //设置默认输入参数
+	bool Bool_Cuting = false;//设置默认输入参数
+	float far_cuting = 10, near_cuting = 0, SmoothnessThreshold = 5, CurvatureThreshold = 0.05;//设置默认输入参数
+	
+	pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+	if (pcl::io::loadPCDFile <pcl::PointXYZ>("test.pcd", *cloud) == -1)
+	{
+		std::cout << "Cloud reading failed." << std::endl;
+		return (-1);
+	}// 加载输入点云数据
+	std::cout << "Cloud reading successful! cloud size is:" << cloud->size() << std::endl;//输出聚类的数量
+	//Noraml estimation step(1 parameter)
+
+	std::cout << "Start NormalEstimation-----" << std::endl;
+	pcl::search::Search<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>);
+	pcl::PointCloud <pcl::Normal>::Ptr normals(new pcl::PointCloud <pcl::Normal>);
+	pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> normal_estimator;//创建法线估计对象
+	normal_estimator.setSearchMethod(tree);//设置搜索方法
+	normal_estimator.setInputCloud(cloud);//设置法线估计对象输入点集
+	normal_estimator.setKSearch(KN_normal);// 设置用于法向量估计的k近邻数目
+	normal_estimator.compute(*normals);//计算并输出法向量
+	
+	//optional step: cutting the part are far from the orignal point in Z direction.2 parameters
+	pcl::IndicesPtr indices(new std::vector <int>);//创建一组索引
+	if (Bool_Cuting)//判断是否需要直通滤波
+	{
+		pcl::PassThrough<pcl::PointXYZ> pass;//设置直通滤波器对象
+		pass.setInputCloud(cloud);//设置输入点云
+		pass.setFilterFieldName("z");//设置指定过滤的维度
+		pass.setFilterLimits(near_cuting, far_cuting);//设置指定纬度过滤的范围
+		pass.filter(*indices);//执行滤波，保存滤波结果在上述索引中
+	}
+
+	std::cout << "Start RegionGrowing-----" << std::endl;
+	// 区域生长算法的5个参数
+	pcl::RegionGrowing<pcl::PointXYZ, pcl::Normal> reg;//创建区域生长分割对象
+	reg.setMinClusterSize(1000);//设置一个聚类需要的最小点数
+	reg.setMaxClusterSize(100000);//设置一个聚类需要的最大点数
+	reg.setSearchMethod(tree);//设置搜索方法
+	reg.setNumberOfNeighbours(30);//设置搜索的临近点数目
+	reg.setInputCloud(cloud);//设置输入点云
+	if (Bool_Cuting)reg.setIndices(indices);//通过输入参数设置，确定是否输入点云索引
+	reg.setInputNormals(normals);//设置输入点云的法向量
+	reg.setSmoothnessThreshold(SmoothnessThreshold / 180.0 * M_PI);//设置平滑阈值
+	reg.setCurvatureThreshold(CurvatureThreshold);//设置曲率阈值
+
+	std::vector <pcl::PointIndices> clusters;
+	reg.extract(clusters);//获取聚类的结果，分割结果保存在点云索引的向量中。
+	
+	std::cout << "Number of clusters is equal to " << clusters.size() << std::endl;//输出聚类的数量
+	std::cout << "First cluster has " << clusters[0].indices.size() << " points." << endl;//输出第一个聚类的数量
+	std::cout << "These are the indices of the points of the initial" <<
+		std::endl << "cloud that belong to the first cluster:" << std::endl;
+
+	pcl::ExtractIndices<pcl::PointXYZ> extractor;
+	extractor.setInputCloud(cloud);
+
+	for (size_t i = 0; i < clusters.size(); ++i)
+	{
+		pcl::PointIndices::Ptr cluster_indices(
+			new pcl::PointIndices(clusters[i]));
+
+		pcl::PointCloud<pcl::PointXYZ>::Ptr cluster_cloud(
+			new pcl::PointCloud<pcl::PointXYZ>);
+
+		extractor.setIndices(cluster_indices);
+		extractor.setNegative(false);   // false = 提取该聚类
+		extractor.filter(*cluster_cloud);
+
+		std::cout << "Cluster " << i
+			<< " size: " << cluster_cloud->size() << std::endl;
+
+		// ===== 保存为 PCD =====
+		std::stringstream ss;
+		ss << "./data/cluster_" << i << ".pcd";//保存分割结果路径
+		pcl::io::savePCDFileBinary(ss.str(), *cluster_cloud);
+	}
+	pcl::PointCloud <pcl::PointXYZRGB>::Ptr colored_cloud = reg.getColoredCloud();
+	
+	pcl::visualization::PCLVisualizer::Ptr viewer(
+		new pcl::visualization::PCLVisualizer("区域增长分割方法"));
+
+	viewer->setBackgroundColor(0.1, 0.1, 0.1);
+	viewer->addPointCloud<pcl::PointXYZRGB>(colored_cloud, "cloud");
+	viewer->setPointCloudRenderingProperties(
+		pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 2, "cloud");
+	// ② 自动调整相机（关键）
+	viewer->resetCamera();
+	// ③ 坐标轴（调试用）
+	viewer->addCoordinateSystem(10.0);
+
+	while (!viewer->wasStopped())
+	{
+		viewer->spinOnce(100);
+		Sleep(10);   // Windows 必须
+	}
+
+	return (0);
+}
